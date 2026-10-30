@@ -138,3 +138,13 @@ def test_empty_messages_are_rejected(client: TestClient, agent_key: str) -> None
     body = {"model": "mock-small", "messages": []}
     response = client.post("/v1/chat/completions", json=body, headers=auth(agent_key))
     assert response.status_code == 422
+
+
+def test_docs_offer_a_bearer_authorization(client: TestClient) -> None:
+    schemes = client.get("/openapi.json").json()["components"]["securitySchemes"]
+    assert any(s["type"] == "http" and s["scheme"] == "bearer" for s in schemes.values())
+
+
+def test_authorization_is_not_a_plain_header_parameter(client: TestClient) -> None:
+    route = client.get("/openapi.json").json()["paths"]["/v1/chat/completions"]["post"]
+    assert all(p["name"].lower() != "authorization" for p in route.get("parameters", []))
