@@ -3,8 +3,9 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, Header, Request, Response
+from fastapi import Depends, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Engine
 
@@ -20,6 +21,11 @@ from app.usage import record_event
 app = FastAPI(title="LLM Gateway Auto Pilot", version=__version__)
 
 EngineDep = Annotated[Engine, Depends(get_engine)]
+
+# Declarer le schema de securite donne le bouton Authorize de la page /docs.
+# Un simple parametre nomme Authorization serait ignore par OpenAPI, donc jamais envoye.
+bearer_scheme = HTTPBearer(auto_error=False, description="Cle d'API d'un agent, de la forme gw_...")
+CredentialsDep = Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]
 
 
 class ChatMessage(BaseModel):
@@ -51,8 +57,9 @@ def chat_completions(
     body: ChatRequest,
     response: Response,
     engine: EngineDep,
-    authorization: Annotated[str | None, Header()] = None,
+    credentials: CredentialsDep,
 ) -> dict[str, Any]:
+    authorization = f"Bearer {credentials.credentials}" if credentials else None
     request_id = uuid.uuid4()
     response.headers["X-Request-ID"] = str(request_id)
 
