@@ -1,20 +1,29 @@
+import secrets
 import time
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, Request, Response
-from fastapi.responses import JSONResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import Depends, FastAPI, Query, Request, Response
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.security import (
+    HTTPAuthorizationCredentials,
+    HTTPBasic,
+    HTTPBasicCredentials,
+    HTTPBearer,
+)
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Engine
 
 from app import __version__
+from app.config import admin_password
+from app.dashboard import render_dashboard
 from app.db.session import get_engine
 from app.errors import GatewayError
 from app.pricing import compute_cost_micro_usd, find_price
 from app.providers import provider_for_model
 from app.providers.base import Message
+from app.reporting import fetch_usage
 from app.security import authenticate
 from app.usage import record_event
 
@@ -26,6 +35,23 @@ EngineDep = Annotated[Engine, Depends(get_engine)]
 # Un simple parametre nomme Authorization serait ignore par OpenAPI, donc jamais envoye.
 bearer_scheme = HTTPBearer(auto_error=False, description="Cle d'API d'un agent, de la forme gw_...")
 CredentialsDep = Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]
+
+# Tableau de bord : un seul utilisateur, "admin", dont le mot de passe vient de ADMIN_PASSWORD.
+basic_scheme = HTTPBasic(
+    auto_error=False, description="Utilisateur admin, mot de passe ADMIN_PASSWORD"
+)
+BasicDep = Annotated[HTTPBasicCredentials | None, Depends(basic_scheme)]
+DaysQuery = Annotated[int, Query(ge=1, le=365)]
+
+PAGE_HEADERS = {
+    "Cache-Control": "no-store",
+    "Content-Security-Policy": (
+        "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; "
+        "form-action 'none'; frame-ancestors 'none'"
+    ),
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+}
 
 
 class ChatMessage(BaseModel):
@@ -43,8 +69,35 @@ class ChatRequest(BaseModel):
 
 @app.exception_handler(GatewayError)
 async def gateway_error_handler(request: Request, error: GatewayError) -> JSONResponse:
-    headers = {"WWW-Authenticate": "Bearer"} if error.status_code == 401 else None
+    headers = error.headers
+    if headers is None and error.status_code == 401:
+        headers = {"WWW-Authenticate": "Bearer"}
     return JSONResponse(status_code=error.status_code, content=error.body(), headers=headers)
+
+
+def require_admin(credentials: BasicDep) -> None:
+    """Refuse l'acces sans le bon mot de passe. Sans ADMIN_PASSWORD, tout reste ferme."""
+    expected = admin_password()
+    if expected is None:
+        raise GatewayError(
+            503,
+            "Tableau de bord desactive : ADMIN_PASSWORD n'est pas configure.",
+            "dashboard_disabled",
+            "server_error",
+        )
+    valid = (
+        credentials is not None
+        and secrets.compare_digest(credentials.username.encode(), b"admin")
+        and secrets.compare_digest(credentials.password.encode(), expected.encode())
+    )
+    if not valid:
+        raise GatewayError(
+            401,
+            "Identifiants invalides. Utilisateur : admin.",
+            "invalid_credentials",
+            "authentication_error",
+            headers={"WWW-Authenticate": 'Basic charset="UTF-8"'},
+        )
 
 
 @app.get("/healthz")
@@ -118,5 +171,43 @@ def chat_completions(
             "prompt_tokens": completion.tokens_in,
             "completion_tokens": completion.tokens_out,
             "total_tokens": completion.tokens_in + completion.tokens_out,
+        },
+    }
+
+
+@app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
+def dashboard(
+    engine: EngineDep, _admin: Annotated[None, Depends(require_admin)], days: DaysQuery = 7
+) -> HTMLResponse:
+    with engine.connect() as conn:
+        report = fetch_usage(conn, days)
+    return HTMLResponse(render_dashboard(report), headers=PAGE_HEADERS)
+
+
+@app.get("/api/usage")
+def api_usage(
+    engine: EngineDep, _admin: Annotated[None, Depends(require_admin)], days: DaysQuery = 7
+) -> dict[str, Any]:
+    with engine.connect() as conn:
+        report = fetch_usage(conn, days)
+    return {
+        "days": report.days,
+        "uses_mock_prices": report.uses_mock_prices,
+        "rows": [
+            {
+                "project": row.project,
+                "agent": row.agent,
+                "calls": row.calls,
+                "tokens_in": row.tokens_in,
+                "tokens_out": row.tokens_out,
+                "cost_micro_usd": row.cost_micro_usd,
+            }
+            for row in report.rows
+        ],
+        "total": {
+            "calls": report.total_calls,
+            "tokens_in": report.total_tokens_in,
+            "tokens_out": report.total_tokens_out,
+            "cost_micro_usd": report.total_cost_micro_usd,
         },
     }

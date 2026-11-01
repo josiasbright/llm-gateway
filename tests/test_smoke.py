@@ -14,6 +14,7 @@ def test_env_example_lists_required_variables() -> None:
         "POSTGRES_DB",
         "POSTGRES_PORT",
         "DATABASE_URL",
+        "ADMIN_PASSWORD",
     ):
         assert values.get(name), f"{name} doit être défini et non vide dans .env.example"
 

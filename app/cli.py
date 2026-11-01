@@ -1,52 +1,37 @@
 import argparse
 import sys
-from decimal import Decimal
 
-from sqlalchemy import Connection, text
+from sqlalchemy import Connection
 
 from app.agents import AgentExistsError, create_agent
 from app.db.session import get_engine
-from app.pricing import MICRO
-
-
-def dollars(micro_usd: int) -> str:
-    """Affiche des micro-dollars en dollars, avec six decimales."""
-    return f"{Decimal(micro_usd) / Decimal(MICRO):.6f}"
+from app.reporting import dollars, fetch_usage
 
 
 def render_report(conn: Connection, days: int) -> str:
-    rows = conn.execute(
-        text(
-            """
-            SELECT p.name AS project, a.name AS agent, count(*) AS calls,
-                   coalesce(sum(e.tokens_in), 0) AS tokens_in,
-                   coalesce(sum(e.tokens_out), 0) AS tokens_out,
-                   coalesce(sum(e.cost_micro_usd), 0) AS cost
-            FROM usage_events e
-            JOIN agents a ON a.id = e.agent_id
-            JOIN projects p ON p.id = e.project_id
-            WHERE e.occurred_at >= now() - (:days * interval '1 day')
-            GROUP BY p.name, a.name
-            ORDER BY sum(e.cost_micro_usd) DESC, a.name
-            """
-        ),
-        {"days": days},
-    ).all()
+    report = fetch_usage(conn, days)
     title = f"Depenses des {days} derniers jours (UTC)"
-    if not rows:
+    if not report.rows:
         return f"{title}\nAucun appel enregistre sur cette periode."
     header = ("Projet", "Agent", "Appels", "Tokens entree", "Tokens sortie", "Cout (USD)")
     lines = [
-        (r.project, r.agent, str(r.calls), str(r.tokens_in), str(r.tokens_out), dollars(r.cost))
-        for r in rows
+        (
+            r.project,
+            r.agent,
+            str(r.calls),
+            str(r.tokens_in),
+            str(r.tokens_out),
+            dollars(r.cost_micro_usd),
+        )
+        for r in report.rows
     ]
     total = (
         "Total",
         "",
-        str(sum(r.calls for r in rows)),
-        str(sum(r.tokens_in for r in rows)),
-        str(sum(r.tokens_out for r in rows)),
-        dollars(sum(r.cost for r in rows)),
+        str(report.total_calls),
+        str(report.total_tokens_in),
+        str(report.total_tokens_out),
+        dollars(report.total_cost_micro_usd),
     )
     table = [header, *lines, total]
     widths = [max(len(row[i]) for row in table) for i in range(len(header))]

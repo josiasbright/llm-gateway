@@ -1,5 +1,3 @@
-"""Configuration minimale, lue dans l'environnement puis dans le fichier .env."""
-
 import os
 from pathlib import Path
 
@@ -29,6 +27,31 @@ def database_url() -> str:
     if not url:
         raise RuntimeError("DATABASE_URL introuvable : copier .env.example en .env")
     return url
+
+
+ADMIN_EXAMPLE_VALUE = "change-me-admin"
+
+
+def setting(name: str) -> str | None:
+    """Valeur d'un reglage : variable d'environnement d'abord (meme vide), puis .env."""
+    if name in os.environ:
+        return os.environ[name]
+    env_path = ROOT / ".env"
+    if env_path.exists():
+        return read_env_file(env_path).get(name)
+    return None
+
+
+def admin_password() -> str | None:
+    """Mot de passe du tableau de bord, ou rien s'il n'est pas configure.
+
+    La valeur d'exemple de .env.example est refusee : un modele public ne doit pas
+    devenir un vrai mot de passe par oubli.
+    """
+    value = setting("ADMIN_PASSWORD")
+    if not value or value == ADMIN_EXAMPLE_VALUE:
+        return None
+    return value
 
 
 def sqlalchemy_url() -> URL:
