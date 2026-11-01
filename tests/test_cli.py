@@ -5,7 +5,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 
 from app.agents import AgentExistsError, create_agent
-from app.cli import dollars, render_report
+from app.cli import render_report
+from app.reporting import dollars
 
 
 def test_dollars_shows_six_decimals() -> None:
