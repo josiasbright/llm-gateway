@@ -1,6 +1,5 @@
-# Base PostgreSQL pour le développement local.
-# La version doit être alignée sur celle de l'hébergeur retenu (à vérifier avant E14).
 services:
+ 
   db:
     image: postgres:16-alpine
     container_name: llm-gateway-db
@@ -9,7 +8,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Copier .env.example en .env}
       POSTGRES_DB: ${POSTGRES_DB:?Copier .env.example en .env}
     ports:
-                  - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -17,6 +16,29 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    security_opt:
+      - no-new-privileges:true
+
+  
+  app:
+    build: .
+    container_name: llm-gateway-app
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:?Copier .env.example en .env}:${POSTGRES_PASSWORD:?Copier .env.example en .env}@db:5432/${POSTGRES_DB:?Copier .env.example en .env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Ajouter ADMIN_PASSWORD dans .env}
+      PORT: "8000"
+    ports:
+      - "127.0.0.1:${APP_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped
     security_opt:
       - no-new-privileges:true
 
