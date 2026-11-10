@@ -1,7 +1,9 @@
 services:
- 
+  # Base PostgreSQL pour le développement local.
+  # La version est alignée sur celle de l'hébergeur retenu (Neon : PostgreSQL 18).
+  # Depuis la version 18, l'image attend le volume sur /var/lib/postgresql (et non sur /data).
   db:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     container_name: llm-gateway-db
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?Copier .env.example en .env}
@@ -10,7 +12,7 @@ services:
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
@@ -19,7 +21,8 @@ services:
     security_opt:
       - no-new-privileges:true
 
-  
+  # Application : construite depuis le Dockerfile, démarrée après la base.
+  # Dans Compose, la base s'appelle "db" (et non 127.0.0.1) et écoute sur 5432.
   app:
     build: .
     container_name: llm-gateway-app
