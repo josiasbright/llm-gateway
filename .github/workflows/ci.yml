@@ -46,3 +46,5 @@ jobs:
         run: |
           cp .env.example .env
           docker compose config --quiet
+      - name: Construire l'image Docker
+        run: docker build -t llm-gateway:ci .
